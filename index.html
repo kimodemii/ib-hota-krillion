@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IB HotA Deep Dive — American Revolution (Military)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background: #071928; color: #f0f6fc; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 16px; box-sizing: border-box; }
+    .card { background: #0d273d; border: 1px solid #1d4668; border-radius: 16px; padding: 28px; max-width: 520px; width: 100%; box-shadow: 0 12px 32px rgba(0,0,0,0.4); text-align: center; }
+    h1 { margin-top: 0; font-size: 1.6rem; color: #79cfdf; }
+    p { color: #afbdcb; line-height: 1.5; }
+    input { width: 100%; padding: 14px; font-size: 1.1rem; border-radius: 10px; border: 2px solid #285a84; background: #061420; color: #fff; box-sizing: border-box; margin: 12px 0; text-align: center; }
+    input:focus { outline: none; border-color: #79cfdf; }
+    button { background: #6af0bb; color: #051824; font-weight: 700; font-size: 1.05rem; border: none; padding: 14px 24px; border-radius: 10px; cursor: pointer; width: 100%; margin-top: 8px; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .hud { display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 16px; color: #afbdcb; }
+    .timer { color: #ffb16b; font-size: 1.2rem; }
+    .prompt { font-size: 1.3rem; font-weight: 600; margin: 20px 0; min-height: 64px; color: #ffffff; }
+    .feedback { min-height: 28px; font-weight: 700; margin-top: 10px; }
+    .hidden { display: none; }
+    .summary-list { text-align: left; margin: 16px 0; font-size: 0.95rem; }
+    .summary-item { padding: 8px 0; border-bottom: 1px solid #1d4668; display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <!-- START SCREEN -->
+    <div id="screen-start">
+      <h1>American Revolution (Military)</h1>
+      <p>Seven little tests of your big, strange brain. Find the less obvious answer.</p>
+      <input type="text" id="student-name" placeholder="Enter First Name & Last Initial" autocomplete="off" />
+      <button id="btn-start">Dive In</button>
+    </div>
+
+    <!-- GAMEPLAY SCREEN -->
+    <div id="screen-play" class="hidden">
+      <div class="hud">
+        <span id="hud-progress">Prompt 1 / 7</span>
+        <span id="hud-score">Score: 0 (0m)</span>
+        <span class="timer" id="hud-timer">25s</span>
+      </div>
+      <div class="prompt" id="prompt-text"></div>
+      <form id="guess-form">
+        <input type="text" id="guess-input" placeholder="Type an answer & press Enter..." autocomplete="off" />
+        <button type="submit" id="btn-submit">Submit Answer</button>
+      </form>
+      <div class="feedback" id="feedback"></div>
+    </div>
+
+    <!-- END SCREEN -->
+    <div id="screen-end" class="hidden">
+      <h1>Dive Complete!</h1>
+      <p id="final-depth" style="font-size: 1.3rem; font-weight: 700; color: #6af0bb;"></p>
+      <div class="summary-list" id="summary-list"></div>
+      <p id="upload-status" style="font-size: 0.9rem; color: #79cfdf;">Uploading score to leaderboard...</p>
+    </div>
+  </div>
+  <script>
+    const WEB_APP_URL = "PASTE_YOUR_WEB_APP_URL_HERE";
+    const SECONDS_PER_QUESTION = 25;
+
+    const PROMPTS = [
+      "Name a battle or siege of the American Revolution.",
+      "Name a country involved in the war",
+      "Name a river, bay, or other body of water from the lecture.",
+      "Name a commander on the American side or allied with it (last name is fine).",
+      "Name a commander or officer on the British side (last name is fine).",
+      "Name a reason the British lost the war.",
+      "Name a group of people who fought in or around the war"
+    ];
+
+    let studentName = "";
+    let currentQ = 0;
+    let totalScore = 0;
+    let timeLeft = SECONDS_PER_QUESTION;
+    let timerId = null;
+    let isChecking = false;
+    let results = [];
+
+    const startScreen = document.getElementById("screen-start");
+    const playScreen = document.getElementById("screen-play");
+    const endScreen = document.getElementById("screen-end");
+    const guessInput = document.getElementById("guess-input");
+    const feedbackEl = document.getElementById("feedback");
+
+    document.getElementById("btn-start").addEventListener("click", () => {
+      const nameVal = document.getElementById("student-name").value.trim();
+      if (!nameVal) { alert("Please enter your name first!"); return; }
+      studentName = nameVal;
+      startScreen.classList.add("hidden");
+      playScreen.classList.remove("hidden");
+      loadQuestion();
+    });
+
+    function loadQuestion() {
+      if (currentQ >= PROMPTS.length) { finishGame(); return; }
+      timeLeft = SECONDS_PER_QUESTION;
+      isChecking = false;
+      guessInput.value = "";
+      guessInput.disabled = false;
+      document.getElementById("btn-submit").disabled = false;
+      feedbackEl.textContent = "";
+      document.getElementById("hud-progress").textContent = `Prompt ${currentQ + 1} / ${PROMPTS.length}`;
+      document.getElementById("prompt-text").textContent = PROMPTS[currentQ];
+      updateTimerDisplay();
+      guessInput.focus();
+      startTimer();
+    }
+
+    function startTimer() {
+      clearInterval(timerId);
+      timerId = setInterval(() => {
+        timeLeft--;
+        updateTimerDisplay();
+        if (timeLeft <= 0) {
+          clearInterval(timerId);
+          recordRound("Time's up!", "Missed", 0, "#ff6b6b");
+        }
+      }, 1000);
+    }
+
+    function updateTimerDisplay() {
+      document.getElementById("hud-timer").textContent = `${timeLeft}s`;
+    }
+
+    document.getElementById("guess-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const guess = guessInput.value.trim();
+      if (!guess || isChecking) return;
+
+      isChecking = true;
+      clearInterval(timerId);
+      guessInput.disabled = true;
+      document.getElementById("btn-submit").disabled = true;
+      feedbackEl.style.color = "#afbdcb";
+      feedbackEl.textContent = "Checking...";
+
+      try {
+        const res = await fetch(WEB_APP_URL, {
+          method: "POST",
+          body: JSON.stringify({ action: "checkAnswer", questionIndex: currentQ, guess })
+        });
+        const data = await res.json();
+
+        if (data.valid) {
+          recordRound(data.canonicalText, data.categoryName, data.points, data.color);
+        } else {
+          feedbackEl.style.color = "#ff6b6b";
+          feedbackEl.textContent = `"${guess}" isn't on the list — try again!`;
+          isChecking = false;
+          guessInput.disabled = false;
+          document.getElementById("btn-submit").disabled = false;
+          guessInput.select();
+          startTimer();
+        }
+      } catch (err) {
+        feedbackEl.textContent = "Network hiccup — try submitting again.";
+        isChecking = false;
+        guessInput.disabled = false;
+        document.getElementById("btn-submit").disabled = false;
+        startTimer();
+      }
+    });
+
+    function recordRound(answerText, tierName, pts, color) {
+      totalScore += pts;
+      document.getElementById("hud-score").textContent = `Score: ${totalScore} (${totalScore * 10}m)`;
+      feedbackEl.style.color = color;
+      feedbackEl.textContent = pts > 0 ? `${tierName}! (+${pts} pts)` : "Time's up! (+0 pts)";
+      results.push({ prompt: PROMPTS[currentQ], answer: answerText, tier: tierName, pts, color });
+
+      setTimeout(() => {
+        currentQ++;
+        loadQuestion();
+      }, 1300);
+    }
+
+    async function finishGame() {
+      playScreen.classList.add("hidden");
+      endScreen.classList.remove("hidden");
+      document.getElementById("final-depth").textContent = `Final Score: ${totalScore} pts (${totalScore * 10}m depth)`;
+
+      const listEl = document.getElementById("summary-list");
+      results.forEach((r, i) => {
+        const row = document.createElement("div");
+        row.className = "summary-item";
+        row.innerHTML = `<span><strong>Q${i+1}:</strong> ${r.answer}</span><span style="color:${r.color}; font-weight:700;">${r.tier} (+${r.pts})</span>`;
+        listEl.appendChild(row);
+      });
+
+      try {
+        await fetch(WEB_APP_URL, {
+          method: "POST",
+          body: JSON.stringify({ action: "submitScore", studentName, score: totalScore })
+        });
+        document.getElementById("upload-status").textContent = "Score recorded to leaderboard!";
+      } catch (e) {
+        document.getElementById("upload-status").textContent = "Could not auto-upload — show this screen to your teacher!";
+      }
+    }
+  </script>
+</body>
+</html>
